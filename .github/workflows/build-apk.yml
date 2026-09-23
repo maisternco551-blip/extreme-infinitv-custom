@@ -1,0 +1,83 @@
+name: Build Android TV APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android TV & Mobile APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-36 build-tools;36.0.0 ndk;29.0.13846066"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Android APK
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/29.0.13846066
+          XT_SKIP_FFMPEG_SIDECAR: "1"
+        run: pnpm tauri android build --apk -d
+
+      - name: Find and Prepare APK
+        id: prepare_apk
+        run: |
+          mkdir -p build_output
+          find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -exec cp {} build_output/ \;
+          ls -la build_output/
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Extreme-InfiniTV-APK
+          path: build_output/*.apk
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        with:
+          tag_name: v1.9.0-custom
+          name: "Extreme InfiniTV - Custom Edition (APK)"
+          body: |
+            ## 🚀 Extreme InfiniTV - Custom Edition
+            - 🎨 **Theme**: Obsidian OLED & Cinematic Crimson Ember
+            - 🎬 **Smart Importer**: One-click JSON/W3U Movie & Series Importer
+            - 📺 **Android TV**: 100% Leanback & D-pad remote compatible
+            - 📦 **Target**: Universal Android TV & Mobile
+          files: build_output/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
