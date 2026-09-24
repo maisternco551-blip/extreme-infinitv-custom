@@ -52,16 +52,16 @@
 
 ---
 
-## 4. สิ่งที่จะทำต่อในขั้นตอนถัดไป (Next Steps)
+## 4. สถานะการประกอบไฟล์ติดตั้ง Android (.apk) [เสร็จสมบูรณ์ 100%]
 
-1. **ส่งโค้ดขึ้น GitHub (Push to GitHub):**
-   - รันคำสั่งส่งโค้ดขึ้น Repository `maisternco551-blip/extreme-infinitv-custom`
-   - เมื่อโค้ดขึ้นไปแล้ว ระบบ GitHub Actions Cloud จะเริ่มประกอบไฟล์ `.apk` โดยอัตโนมัติ
-2. **รับไฟล์ APK:**
-   - เข้าไปดาวน์โหลดไฟล์ `.apk` ที่หน้า GitHub Release หรือ Artifacts
-   - ก๊อปลง Flash Drive หรือส่งลิงก์เข้าแอป Downloader บน Android TV / กล่อง เพื่อติดตั้งใช้งานจริง
-3. **(ตัวเลือกเสริม) ระบบ Cloud Sync:**
-   - หากในอนาคตต้องการให้หนังที่เพิ่มในคอมพิวเตอร์ อัปเดตไปยังทีวีของทุกคนในบ้านโดยไม่ต้องกดเพิ่มทีละเครื่อง สามารถเชื่อมต่อไฟล์ลิสต์ผ่าน Google Drive หรือ Dropbox ได้
+- [x] **ยืนยันสิทธิ์ GitHub Token:** เพิ่มสิทธิ์ `workflow` scope เรียบร้อย
+- [x] **ส่งโค้ดขึ้น GitHub (Push to GitHub):** ขึ้น Repository `maisternco551-blip/extreme-infinitv-custom` สำเร็จ
+- [x] **GitHub Actions Cloud Build:** ประกอบไฟล์ APK สำเร็จเรียบร้อย (Run ID: `35941814435`)
+- [x] **สร้าง GitHub Release:** `v1.9.0-custom` พร้อมแนบไฟล์ติดตั้ง APK
+- [x] **ดาวน์โหลดไฟล์ APK มาไว้ในเครื่องเรียบร้อย:**
+  - **ที่อยู่ไฟล์ในเครื่อง:** `D:\IPTV & Streaming App\app-universal-debug.apk` (ขนาดประมาณ 287 MB)
+  - **ลิงก์ดาวน์โหลดบน GitHub:** [Extreme InfiniTV v1.9.0-custom Release](https://github.com/maisternco551-blip/extreme-infinitv-custom/releases/tag/v1.9.0-custom)
+  - **การนำไปติดตั้ง:** สามารถคัดลอกไฟล์ `app-universal-debug.apk` ใส่ Flash Drive ไปเสียบติดตั้งบน Android TV / Google TV หรือส่งเข้ามือถือ Android ได้ทันที!
 
 ---
-*บันทึกโดย Antigravity AI - วันที่ 23 ก.ย. 2026*
+*บันทึกอัปเดตโดย Antigravity AI - วันที่ 24 ก.ย. 2026*
