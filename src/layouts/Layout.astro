@@ -1128,6 +1128,12 @@ const appMode = import.meta.env.PUBLIC_APP_MODE || ""
   })
   window.addEventListener("focus", pruneDownloadsIfStale)
 
+  // Auto-sync media catalog from Supabase cloud on launch if configured
+  try {
+    const { autoSyncOnStartup } = await import("@/scripts/lib/cloud-catalog.js")
+    autoSyncOnStartup().catch(() => {})
+  } catch {}
+
   window.addEventListener("load", function () {
     let snReady = false
     const initSpatialNav = () => {

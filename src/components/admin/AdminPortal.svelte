@@ -18,6 +18,14 @@
   } from "@/scripts/lib/media-library.js"
   import { setCached } from "@/scripts/lib/cache.js"
   import { normalize } from "@/scripts/lib/text.js"
+  import {
+    getCloudConfig,
+    saveCloudConfig,
+    testCloudConnection,
+    pushCatalogToCloud,
+    pullCatalogFromCloud,
+    DEFAULT_SQL_SETUP
+  } from "@/scripts/lib/cloud-catalog.js"
 
   // Auth State
   let authed = $state(false)
@@ -26,8 +34,15 @@
 
   // Active Library State
   let activeLibrary = $state(null)
-  let activeTab = $state("dashboard") // dashboard | import | movies | series | settings
+  let activeTab = $state("dashboard") // dashboard | import | movies | series | settings | cloud
   let isLoading = $state(true)
+
+  // Cloud Sync State
+  let cloudConfig = $state(getCloudConfig())
+  let cloudTestStatus = $state({ text: "", type: "", loading: false })
+  let cloudSyncStatus = $state({ text: "", type: "", loading: false })
+  let sqlCopied = $state(false)
+  let showVaultKey = $state(false)
 
   // Catalog State
   let movies = $state([])
@@ -526,6 +541,95 @@
     }
   }
 
+  // --- Cloud Sync Handlers ---
+  function handleSaveCloudConfig() {
+    cloudConfig = saveCloudConfig(cloudConfig)
+    showToast("บันทึกการตั้งค่า Cloud เรียบร้อย", "success")
+  }
+
+  async function handleTestCloud() {
+    cloudTestStatus = { text: "กำลังทดสอบการเชื่อมต่อไปยัง Supabase...", type: "info", loading: true }
+    try {
+      handleSaveCloudConfig()
+      const res = await testCloudConnection(cloudConfig)
+      const info = res.hasExistingCatalog
+        ? `(พบคลังข้อมูลบน Cloud: ${res.remoteInfo?.movie_count || 0} หนัง, ${res.remoteInfo?.series_count || 0} ซีรีส์)`
+        : `(ยังไม่มีข้อมูลแคตตาล็อกบน Cloud)`
+      cloudTestStatus = {
+        text: `🟢 เชื่อมต่อ Supabase สำเร็จ! (ความเร็ว: ${res.latency}ms) ${info}`,
+        type: "success",
+        loading: false
+      }
+      showToast("เชื่อมต่อ Supabase สำเร็จ!", "success")
+    } catch (err) {
+      cloudTestStatus = {
+        text: "🔴 " + (err.message || String(err)),
+        type: "error",
+        loading: false
+      }
+    }
+  }
+
+  async function handlePushToCloud() {
+    if (!cloudConfig.url || !cloudConfig.anonKey) {
+      activeTab = "cloud"
+      showToast("กรุณาตั้งค่าเชื่อมต่อ Supabase ก่อนครับ", "error")
+      return
+    }
+    cloudSyncStatus = { text: "🔐 กำลังเข้ารหัสข้อมูล (AES-256) และส่งขึ้น Cloud...", type: "info", loading: true }
+    try {
+      const res = await pushCatalogToCloud(activeLibrary?._id)
+      cloudConfig = getCloudConfig()
+      cloudSyncStatus = {
+        text: `🎉 อัปเดตข้อมูลขึ้น Cloud สำเร็จ! (${res.movieCount} หนัง, ${res.seriesCount} ซีรีส์) ทุกเครื่องที่เปิดแอปจะได้รับข้อมูลล่าสุดทันที`,
+        type: "success",
+        loading: false
+      }
+      showToast("อัปเดตข้อมูลขึ้น Cloud เรียบร้อย!", "success")
+    } catch (err) {
+      cloudSyncStatus = {
+        text: "❌ " + (err.message || String(err)),
+        type: "error",
+        loading: false
+      }
+    }
+  }
+
+  async function handlePullFromCloud() {
+    if (!cloudConfig.url || !cloudConfig.anonKey) {
+      activeTab = "cloud"
+      showToast("กรุณาตั้งค่าเชื่อมต่อ Supabase ก่อนครับ", "error")
+      return
+    }
+    cloudSyncStatus = { text: "📥 กำลังดึงข้อมูลและถอดรหัสจาก Cloud...", type: "info", loading: true }
+    try {
+      const res = await pullCatalogFromCloud(activeLibrary?._id)
+      cloudConfig = getCloudConfig()
+      await loadData()
+      cloudSyncStatus = {
+        text: `🎉 ดึงข้อมูลสำเร็จ! ได้รับ ${res.movieCount} หนัง, ${res.seriesCount} ซีรีส์เรียบร้อย`,
+        type: "success",
+        loading: false
+      }
+      showToast("ซิงค์ข้อมูลลงเครื่องสำเร็จ!", "success")
+    } catch (err) {
+      cloudSyncStatus = {
+        text: "❌ " + (err.message || String(err)),
+        type: "error",
+        loading: false
+      }
+    }
+  }
+
+  function handleCopySql() {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(DEFAULT_SQL_SETUP)
+    }
+    sqlCopied = true
+    showToast("คัดลอกคำสั่ง SQL เรียบร้อย!", "success")
+    setTimeout(() => { sqlCopied = false }, 3000)
+  }
+
   onMount(() => {
     authed = isAuthenticated()
     if (authed) {
@@ -710,6 +814,19 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
           สำรองข้อมูล & ตั้งค่า PIN
         </button>
+
+        <button
+          type="button"
+          onclick={() => { activeTab = "cloud"; isEditingEpisodes = false; }}
+          class="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap {activeTab === 'cloud' ? 'bg-[#e8590c] text-white shadow-lg shadow-[#e8590c]/25' : 'text-gray-400 hover:text-white hover:bg-[#171e2e]'}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+          ☁️ ซิงค์ Cloud (Database)
+          {#if cloudConfig.url}
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          {:else}
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+          {/if}
+        </button>
       </nav>
 
       <!-- TAB 1: DASHBOARD -->
@@ -766,6 +883,50 @@
                 onclick={openAddMovie}
                 class="px-4 py-2.5 rounded-xl bg-[#1e2638] hover:bg-[#28334a] text-white font-semibold text-xs border border-[#2e3b56] transition-all cursor-pointer">
                 + เพิ่มหนังเดี่ยว
+              </button>
+            </div>
+          </div>
+
+          <!-- Cloud Sync Quick Banner -->
+          <div class="p-6 rounded-2xl bg-[#0f131a] border {cloudConfig.url ? 'border-emerald-500/30' : 'border-amber-500/30'} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl {cloudConfig.url ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'} flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+              </div>
+              <div>
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                  ฐานข้อมูล Cloud กลาง (Supabase)
+                  {#if cloudConfig.url}
+                    <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">เชื่อมต่อแล้ว 🟢</span>
+                  {:else}
+                    <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">ยังไม่ได้ตั้งค่า 🟡</span>
+                  {/if}
+                </h3>
+                <p class="text-xs text-gray-400 mt-0.5">
+                  {#if cloudConfig.url}
+                    ซิงค์ข้อมูลหนังและซีรีส์ขึ้นคลาวด์ เพื่อให้แอปบน Android TV / มือถือ อัปเดตทันที
+                  {:else}
+                    ตั้งค่าเชื่อมต่อ Supabase ฟรี เพื่อให้แอปบน Android TV ซิงค์ข้อมูลจากคอมได้อัตโนมัติ
+                  {/if}
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 w-full sm:w-auto">
+              {#if cloudConfig.url}
+                <button
+                  type="button"
+                  onclick={handlePushToCloud}
+                  disabled={cloudSyncStatus.loading}
+                  class="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+                  {cloudSyncStatus.loading ? 'กำลังซิงค์...' : '🚀 ซิงค์ขึ้น Cloud ทันที'}
+                </button>
+              {/if}
+              <button
+                type="button"
+                onclick={() => { activeTab = "cloud"; }}
+                class="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-[#1a2130] hover:bg-[#232c40] text-gray-200 font-semibold text-xs border border-[#2b3750] transition-all cursor-pointer text-center">
+                {cloudConfig.url ? '⚙️ จัดการ Cloud' : '👉 ตั้งค่า Cloud ฟรี'}
               </button>
             </div>
           </div>
@@ -1179,6 +1340,248 @@
               </div>
             </div>
           </div>
+        </div>
+
+      <!-- TAB 6: CLOUD SYNC & DATABASE -->
+      {:else if activeTab === 'cloud'}
+        <div class="flex flex-col gap-6">
+
+          <!-- Security & Overview Banner -->
+          <div class="p-6 md:p-8 rounded-3xl bg-gradient-to-br from-[#121622] via-[#0d1017] to-[#18110b] border border-[#2b354c] relative overflow-hidden shadow-2xl">
+            <div class="absolute -right-16 -top-16 w-64 h-64 bg-[#e8590c]/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
+              <div class="flex items-start gap-4">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#e8590c] to-[#f97316] flex items-center justify-center text-white shadow-lg shadow-[#e8590c]/30 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2 mb-1 flex-wrap">
+                    <h2 class="text-xl font-bold text-white tracking-tight">ระบบฐานข้อมูลคลาวด์กลาง (Cloud Sync)</h2>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> AES-256 Encrypted
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-300 max-w-2xl leading-relaxed">
+                    เชื่อมต่อฐานข้อมูลคลาวด์ <strong class="text-white">Supabase (ฟรีตลอดชีพ)</strong> เพื่อให้คุณจัดการหนังและซีรีส์จากคอมพิวเตอร์ที่เดียว แล้วแอปบน <strong class="text-orange-400">Android TV, Google TV และ มือถือ</strong> จะอัปเดตข้อมูลตรงกันโดยอัตโนมัติ
+                  </p>
+                  <p class="text-[11px] text-gray-400 mt-2 flex items-center gap-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-400 shrink-0"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    <span><strong>ความปลอดภัยระดับ Zero-Knowledge:</strong> ข้อมูลทั้งหมดจะถูกเข้ารหัสลับ AES-256 ก่อนส่งขึ้น Cloud แม้แต่แฮกเกอร์ก็ไม่สามารถเปิดดูดลิงก์หนังของคุณได้ 100%</span>
+                  </p>
+                </div>
+              </div>
+
+              <!-- Quick Sync Actions -->
+              <div class="flex flex-col sm:flex-row md:flex-col gap-2.5 w-full md:w-auto shrink-0">
+                <button
+                  type="button"
+                  onclick={handlePushToCloud}
+                  disabled={cloudSyncStatus.loading}
+                  class="px-5 py-3 rounded-xl bg-gradient-to-r from-[#e8590c] to-[#f97316] hover:brightness-110 active:scale-95 text-white font-bold text-xs shadow-lg shadow-[#e8590c]/25 transition-all cursor-pointer flex items-center justify-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+                  {cloudSyncStatus.loading ? 'กำลังเข้ารหัส & อัปโหลด...' : '🚀 อัปเดตข้อมูลขึ้น Cloud ทันที'}
+                </button>
+
+                <button
+                  type="button"
+                  onclick={handlePullFromCloud}
+                  disabled={cloudSyncStatus.loading}
+                  class="px-5 py-2.5 rounded-xl bg-[#19202f] hover:bg-[#232c40] text-gray-200 font-semibold text-xs border border-[#2b3750] transition-all cursor-pointer flex items-center justify-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 12-7 7-7-7"/><path d="M12 5v14"/></svg>
+                  📥 ดึงข้อมูลล่าสุดจาก Cloud ลงคอม
+                </button>
+              </div>
+            </div>
+
+            <!-- Sync Status Banner if any -->
+            {#if cloudSyncStatus.text}
+              <div class="mt-4 p-3.5 rounded-xl text-xs font-medium border flex items-center gap-2
+                {cloudSyncStatus.type === 'error' ? 'bg-red-500/15 border-red-500/30 text-red-200' :
+                 cloudSyncStatus.type === 'success' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200' :
+                 'bg-blue-500/15 border-blue-500/30 text-blue-200'}">
+                <span>{cloudSyncStatus.text}</span>
+              </div>
+            {/if}
+          </div>
+
+          <!-- Step-by-Step Guide & Connection Card -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Left 2 Cols: Configuration Form -->
+            <div class="lg:col-span-2 p-6 md:p-8 rounded-3xl bg-[#0f131a] border border-[#1e2638] flex flex-col gap-6">
+              <div>
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-400"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                  ตั้งค่าการเชื่อมต่อ Supabase Database
+                </h3>
+                <p class="text-xs text-gray-400 mt-1">นำ Project URL และ Anon Key จากหน้าเว็บ Supabase มาวางที่นี่</p>
+              </div>
+
+              <div class="flex flex-col gap-4 text-xs">
+                <!-- Supabase Project URL -->
+                <div>
+                  <label class="block font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+                    <span>Supabase Project URL *</span>
+                    <span class="text-[11px] text-gray-500 font-normal">ตัวอย่าง: https://abcdefghijklm.supabase.co</span>
+                  </label>
+                  <input
+                    type="url"
+                    bind:value={cloudConfig.url}
+                    placeholder="https://xxxxxxxxxxxxxxxxxxxx.supabase.co"
+                    class="w-full px-4 py-2.5 bg-[#141924] border border-[#232c40] rounded-xl text-white font-mono text-xs focus:outline-none focus:border-[#e8590c] transition-colors"
+                  />
+                </div>
+
+                <!-- Supabase Anon / Public Key -->
+                <div>
+                  <label class="block font-semibold text-gray-300 mb-1.5 flex items-center justify-between">
+                    <span>Supabase API Key (Anon / Public Key) *</span>
+                    <span class="text-[11px] text-gray-500 font-normal">คีย์ประเภท anon public (ขึ้นต้นด้วย eyJ...)</span>
+                  </label>
+                  <textarea
+                    bind:value={cloudConfig.anonKey}
+                    rows="3"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    class="w-full px-4 py-2.5 bg-[#141924] border border-[#232c40] rounded-xl text-white font-mono text-[11px] focus:outline-none focus:border-[#e8590c] transition-colors custom-scroll"
+                  ></textarea>
+                </div>
+
+                <!-- Vault Encryption Key -->
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <label class="font-semibold text-gray-300 flex items-center gap-1.5">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-400"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                      กุญแจลับเข้ารหัสข้อมูล (AES-256 Vault Key)
+                    </label>
+                    <button
+                      type="button"
+                      onclick={() => { showVaultKey = !showVaultKey; }}
+                      class="text-[11px] text-orange-400 hover:underline cursor-pointer">
+                      {showVaultKey ? 'ซ่อนกุญแจลับ' : 'แสดงกุญแจลับ'}
+                    </button>
+                  </div>
+                  <input
+                    type={showVaultKey ? "text" : "password"}
+                    bind:value={cloudConfig.vaultKey}
+                    placeholder="Extreme-InfiniTV-Vault-Master-Key-2026-OLED"
+                    class="w-full px-4 py-2.5 bg-[#141924] border border-[#232c40] rounded-xl text-white font-mono text-xs focus:outline-none focus:border-[#e8590c] transition-colors"
+                  />
+                  <p class="text-[11px] text-gray-400 mt-1">
+                    * ระบบมีรหัสลับความปลอดภัยสูงให้เป็นค่าเริ่มต้นแล้ว หากต้องการเปลี่ยนต้องใช้รหัสเดียวกันกับทุกเครื่องที่เปิดดู
+                  </p>
+                </div>
+
+                <!-- Auto Sync Toggle -->
+                <div class="flex items-center gap-3 p-3.5 rounded-xl bg-[#141924] border border-[#1f283c]">
+                  <input
+                    type="checkbox"
+                    id="autoSyncToggle"
+                    bind:checked={cloudConfig.autoSync}
+                    class="w-4 h-4 rounded text-[#e8590c] bg-[#1e2638] border-gray-600 focus:ring-0 cursor-pointer"
+                  />
+                  <label for="autoSyncToggle" class="cursor-pointer">
+                    <span class="font-semibold text-white block">ซิงค์อัตโนมัติเมื่อเปิดแอป (Auto-Sync)</span>
+                    <span class="text-[11px] text-gray-400 block">เมื่อเปิดแอปบนทีวีหรือมือถือ จะตรวจสอบและดึงรายการหนังใหม่ล่าสุดจาก Cloud อัตโนมัติ</span>
+                  </label>
+                </div>
+
+                <!-- Test Result Banner -->
+                {#if cloudTestStatus.text}
+                  <div class="p-3.5 rounded-xl text-xs font-medium border flex items-center gap-2
+                    {cloudTestStatus.type === 'error' ? 'bg-red-500/15 border-red-500/30 text-red-200' :
+                     cloudTestStatus.type === 'success' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200' :
+                     'bg-blue-500/15 border-blue-500/30 text-blue-200'}">
+                    <span>{cloudTestStatus.text}</span>
+                  </div>
+                {/if}
+
+                <!-- Save & Test Buttons -->
+                <div class="flex items-center gap-3 mt-2">
+                  <button
+                    type="button"
+                    onclick={handleSaveCloudConfig}
+                    class="px-5 py-2.5 rounded-xl bg-[#1f283c] hover:bg-[#2a3650] text-white font-bold text-xs transition-colors cursor-pointer">
+                    💾 บันทึกการตั้งค่า
+                  </button>
+
+                  <button
+                    type="button"
+                    onclick={handleTestCloud}
+                    disabled={cloudTestStatus.loading}
+                    class="px-5 py-2.5 rounded-xl bg-[#e8590c] hover:bg-[#f97316] text-white font-bold text-xs shadow-md shadow-[#e8590c]/20 transition-all cursor-pointer flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                    {cloudTestStatus.loading ? 'กำลังทดสอบ...' : '🔄 ทดสอบการเชื่อมต่อ (Test)'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right 1 Col: Quick 3-Step Setup Guide & SQL Copier -->
+            <div class="flex flex-col gap-6">
+
+              <!-- Setup Steps Card -->
+              <div class="p-6 rounded-3xl bg-[#0f131a] border border-[#1e2638] flex flex-col gap-4">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                  <span class="w-6 h-6 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs">✨</span>
+                  3 ขั้นตอนเปิดใช้งานฟรี (2 นาที)
+                </h3>
+
+                <div class="flex flex-col gap-3 text-xs">
+                  <div class="p-3 rounded-xl bg-[#141924] border border-[#1f283c]">
+                    <strong class="text-orange-400 block mb-0.5">1. สร้างโปรเจกต์ฟรี</strong>
+                    <p class="text-gray-300 text-[11px]">
+                      เข้าไปที่เว็บ <a href="https://supabase.com" target="_blank" class="text-orange-400 underline font-semibold">supabase.com</a> ล็อกอินด้วย GitHub แล้วกด <strong class="text-white">"New Project"</strong>
+                    </p>
+                  </div>
+
+                  <div class="p-3 rounded-xl bg-[#141924] border border-[#1f283c]">
+                    <strong class="text-orange-400 block mb-0.5">2. คัดลอก URL & Key</strong>
+                    <p class="text-gray-300 text-[11px]">
+                      ไปที่เมนู <strong class="text-white">Project Settings -> API</strong> แล้วคัดลอก <strong class="text-white">Project URL</strong> และ <strong class="text-white">anon public Key</strong> มาวางในช่องทางซ้าย
+                    </p>
+                  </div>
+
+                  <div class="p-3 rounded-xl bg-[#141924] border border-[#1f283c]">
+                    <strong class="text-orange-400 block mb-0.5">3. รันคำสั่งสร้างตาราง</strong>
+                    <p class="text-gray-300 text-[11px]">
+                      กดปุ่มคัดลอก SQL ด้านล่าง นำไปวางในแถบ <strong class="text-white">SQL Editor</strong> บนเว็บ Supabase แล้วกดปุ่ม <strong class="text-white">Run</strong> เพียงครั้งเดียว เป็นอันเสร็จสิ้น!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SQL Setup Copier Card -->
+              <div class="p-6 rounded-3xl bg-[#0f131a] border border-[#1e2638] flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <h4 class="text-xs font-bold text-white flex items-center gap-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-400"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>
+                    คำสั่ง SQL สร้างตาราง
+                  </h4>
+                  <button
+                    type="button"
+                    onclick={handleCopySql}
+                    class="px-3 py-1.5 rounded-lg {sqlCopied ? 'bg-emerald-600 text-white' : 'bg-[#e8590c] hover:bg-[#f97316] text-white'} text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm">
+                    {#if sqlCopied}
+                      ✓ คัดลอกแล้ว!
+                    {:else}
+                      📋 คัดลอก SQL
+                    {/if}
+                  </button>
+                </div>
+
+                <div class="relative">
+                  <pre class="w-full max-h-48 p-3 rounded-xl bg-[#090b10] border border-[#1e273a] text-gray-400 font-mono text-[10px] overflow-x-auto custom-scroll leading-relaxed">{DEFAULT_SQL_SETUP}</pre>
+                </div>
+                <p class="text-[10px] text-gray-500">
+                  * คำสั่งนี้จะสร้างตาราง <code class="text-gray-300">media_catalog</code> พร้อมเปิดสิทธิ์ Row Level Security (RLS) ให้อ่านและเขียนได้อย่างปลอดภัย
+                </p>
+              </div>
+
+            </div>
+
+          </div>
+
         </div>
       {/if}
 
