@@ -32,7 +32,7 @@ create policy "Allow upsert access" on public.media_catalog
 `
 
 export const DEFAULT_SUPABASE_URL = "https://dljjhupwxaahysstdqdk.supabase.co"
-export const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRsampodXB3eGFhaHlzc3RkcWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTMyMDMsImV4cCI6MjEwNTC4ODcwM30.1BlwuwlEq1rnn-5H4P2F1RAo0xaSoZzuUmrCC6CS_BA"
+export const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRsampodXB3eGFhaHlzc3RkcWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMTI3MDMsImV4cCI6MjEwNTc4ODcwM30.1BlwuwlEqlrnn-5H4P2FlRAo0xaSoZzuUmrCC6CS_BA"
 
 /**
  * Get current Cloud configuration
