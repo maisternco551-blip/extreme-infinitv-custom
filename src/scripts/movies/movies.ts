@@ -1007,7 +1007,7 @@ document.addEventListener("xt:active-changed", () => {
 document.addEventListener("xt:cache-revalidated", (ev) => {
   const detail = (ev as CustomEvent).detail
   if (!detail || detail.entryId !== activePlaylistId) return
-  if (detail.kind !== "vod") return
+  if (detail.kind !== "vod" && detail.kind !== "m3u") return
   loadMovies()
 })
 

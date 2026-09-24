@@ -1,0 +1,18 @@
+---
+import AdminPortal from "@/components/admin/AdminPortal.svelte";
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="th" class="h-full bg-[#07090e]">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>ระบบจัดการหลังบ้าน | Extreme InfiniTV</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#07090e" />
+  </head>
+  <body class="h-full bg-[#07090e] text-white overflow-x-hidden antialiased custom-scroll">
+    <AdminPortal client:only="svelte" />
+  </body>
+</html>

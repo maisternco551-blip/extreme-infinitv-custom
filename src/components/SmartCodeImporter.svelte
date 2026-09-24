@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte"
-  import { getActiveEntry } from "@/scripts/lib/creds.js"
+  import { ensureActiveLibrary } from "@/scripts/lib/media-library.js"
   import { getCached, setCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
   import { normalize } from "@/scripts/lib/text.js"
 
@@ -117,9 +117,9 @@
     statusMessage = { text: "กำลังประมวลผลและบันทึกเข้าสู่คลัง...", type: "info" }
 
     try {
-      const active = await getActiveEntry()
+      const active = await ensureActiveLibrary()
       if (!active || !active._id) {
-        statusMessage = { text: "ไม่พบเพลย์ลิสต์ที่กำลังใช้งานอยู่ กรุณาเลือกเพลย์ลิสต์ก่อน", type: "error" }
+        statusMessage = { text: "ไม่สามารถสร้างหรือเชื่อมต่อคลังเพลย์ลิสต์ได้ กรุณาลองใหม่อีกครั้ง", type: "error" }
         isImporting = false
         return
       }
