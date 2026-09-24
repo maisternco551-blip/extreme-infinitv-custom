@@ -57,10 +57,10 @@
 - [x] **ยืนยันสิทธิ์ GitHub Token:** เพิ่มสิทธิ์ `workflow` scope เรียบร้อย
 - [x] **ส่งโค้ดขึ้น GitHub (Push to GitHub):** ขึ้น Repository `maisternco551-blip/extreme-infinitv-custom` สำเร็จ
 - [x] **GitHub Actions Cloud Build:** ประกอบไฟล์ APK สำเร็จเรียบร้อย (Run ID: `35941814435`)
-- [x] **สร้าง GitHub Release:** `v1.9.0-custom` พร้อมแนบไฟล์ติดตั้ง APK
+- [x] **สร้าง GitHub Release:** `v1.9.1-custom` พร้อมแนบไฟล์ติดตั้ง APK ตัวใหม่ล่าสุด
 - [x] **ดาวน์โหลดไฟล์ APK มาไว้ในเครื่องเรียบร้อย:**
-  - **ที่อยู่ไฟล์ในเครื่อง:** `D:\IPTV & Streaming App\app-universal-debug.apk` (ขนาดประมาณ 287 MB)
-  - **ลิงก์ดาวน์โหลดบน GitHub:** [Extreme InfiniTV v1.9.0-custom Release](https://github.com/maisternco551-blip/extreme-infinitv-custom/releases/tag/v1.9.0-custom)
+  - **ที่อยู่ไฟล์ในเครื่อง:** `D:\IPTV & Streaming App\app-universal-debug.apk` (ขนาดประมาณ 301 MB - อัปเดตล่าสุด 24 ก.ย. 2026)
+  - **ลิงก์ดาวน์โหลดบน GitHub:** [Extreme InfiniTV v1.9.1-custom Release](https://github.com/maisternco551-blip/extreme-infinitv-custom/releases/tag/v1.9.1-custom)
   - **การนำไปติดตั้ง:** สามารถคัดลอกไฟล์ `app-universal-debug.apk` ใส่ Flash Drive ไปเสียบติดตั้งบน Android TV / Google TV หรือส่งเข้ามือถือ Android ได้ทันที!
 
 
