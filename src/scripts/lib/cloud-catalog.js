@@ -31,12 +31,15 @@ create policy "Allow upsert access" on public.media_catalog
   for all using (true) with check (true);
 `
 
+export const DEFAULT_SUPABASE_URL = "https://dljjhupwxaahysstdqdk.supabase.co"
+export const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRsampodXB3eGFhaHlzc3RkcWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTMyMDMsImV4cCI6MjEwNTC4ODcwM30.1BlwuwlEq1rnn-5H4P2F1RAo0xaSoZzuUmrCC6CS_BA"
+
 /**
  * Get current Cloud configuration
  */
 export function getCloudConfig() {
   if (typeof window === "undefined") {
-    return { url: "", anonKey: "", vaultKey: DEFAULT_VAULT_KEY, autoSync: true }
+    return { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, vaultKey: DEFAULT_VAULT_KEY, autoSync: true }
   }
 
   try {
@@ -44,8 +47,8 @@ export function getCloudConfig() {
     if (raw) {
       const parsed = JSON.parse(raw)
       return {
-        url: parsed.url || "",
-        anonKey: parsed.anonKey || "",
+        url: normalizeSupabaseUrl(parsed.url || DEFAULT_SUPABASE_URL),
+        anonKey: parsed.anonKey || DEFAULT_SUPABASE_ANON_KEY,
         vaultKey: parsed.vaultKey || DEFAULT_VAULT_KEY,
         autoSync: parsed.autoSync !== false,
         lastSyncedAt: parsed.lastSyncedAt || null
@@ -56,12 +59,20 @@ export function getCloudConfig() {
   }
 
   return {
-    url: "",
-    anonKey: "",
+    url: DEFAULT_SUPABASE_URL,
+    anonKey: DEFAULT_SUPABASE_ANON_KEY,
     vaultKey: DEFAULT_VAULT_KEY,
     autoSync: true,
     lastSyncedAt: null
   }
+}
+
+/**
+ * Normalize Supabase Project URL (auto-strip trailing /rest/v1 or /rest)
+ */
+export function normalizeSupabaseUrl(rawUrl) {
+  let url = String(rawUrl || "").trim().replace(/\/+$/, "")
+  return url.replace(/\/rest(\/v1)?\/?$/i, "")
 }
 
 /**
@@ -72,7 +83,7 @@ export function saveCloudConfig(config) {
   const current = getCloudConfig()
   const updated = {
     ...current,
-    url: String(config.url || "").trim().replace(/\/+$/, ""),
+    url: normalizeSupabaseUrl(config.url),
     anonKey: String(config.anonKey || "").trim(),
     vaultKey: String(config.vaultKey || "").trim() || DEFAULT_VAULT_KEY,
     autoSync: config.autoSync !== false,
@@ -86,7 +97,7 @@ export function saveCloudConfig(config) {
  * Test connection to Supabase database
  */
 export async function testCloudConnection(config) {
-  const url = String(config?.url || "").trim().replace(/\/+$/, "")
+  const url = normalizeSupabaseUrl(config?.url)
   const anonKey = String(config?.anonKey || "").trim()
 
   if (!url || !url.startsWith("http")) {
@@ -169,7 +180,8 @@ export async function pushCatalogToCloud(playlistId) {
   const detailsEncrypted = await encryptData(seriesDetailsMap, vaultKey)
 
   // 3. Post to Supabase REST endpoint (UPSERT)
-  const endpoint = `${config.url}/rest/v1/media_catalog`
+  const baseUrl = normalizeSupabaseUrl(config.url)
+  const endpoint = `${baseUrl}/rest/v1/media_catalog`
   const payload = {
     id: CATALOG_ROW_ID,
     movies_encrypted: moviesEncrypted,
@@ -224,7 +236,8 @@ export async function pullCatalogFromCloud(playlistId) {
   if (!activeId) throw new Error("ไม่พบคลังรายการที่กำลังใช้งาน")
 
   // 1. Fetch remote encrypted row
-  const endpoint = `${config.url}/rest/v1/media_catalog?id=eq.${CATALOG_ROW_ID}&select=*`
+  const baseUrl = normalizeSupabaseUrl(config.url)
+  const endpoint = `${baseUrl}/rest/v1/media_catalog?id=eq.${CATALOG_ROW_ID}&select=*`
   const resp = await fetch(endpoint, {
     method: "GET",
     headers: {
@@ -300,7 +313,8 @@ export async function autoSyncOnStartup() {
     if (!active?._id) return
 
     // Quick check remote updated_at
-    const endpoint = `${config.url}/rest/v1/media_catalog?id=eq.${CATALOG_ROW_ID}&select=updated_at,movie_count,series_count`
+    const baseUrl = normalizeSupabaseUrl(config.url)
+    const endpoint = `${baseUrl}/rest/v1/media_catalog?id=eq.${CATALOG_ROW_ID}&select=updated_at,movie_count,series_count`
     const resp = await fetch(endpoint, {
       method: "GET",
       headers: {
