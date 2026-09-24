@@ -52,13 +52,13 @@
 3. การเตรียมระบบและไฟล์ติดตั้ง Android (.apk) [เสร็จสมบูรณ์ 100%]
 --------------------------------------------------------------------------------
 [x] ระบบ GitHub Actions Cloud Build ประกอบไฟล์ .apk ผ่านฉลุย 100%
-    - Build Run ID ล่าสุด: 35978492819 (Commit 8150868)
-    - อัปเดตไฟล์ลง GitHub Release: v1.9.1-custom เรียบร้อย
+    - Build Run ID ล่าสุด: 36007279912 (Commit 7c92725)
+    - อัปเดตไฟล์ลง GitHub Release: v1.9.2-custom เรียบร้อย
 [x] ดาวน์โหลดไฟล์ APK ตัวล่าสุดมาเก็บไว้ในเครื่องเรียบร้อย:
-    - ตำแหน่งไฟล์ในเครื่อง: D:\IPTV & Streaming App\app-universal-debug.apk (ขนาด ~301 MB)
-    - ลิงก์ดาวน์โหลดบน GitHub: https://github.com/maisternco551-blip/extreme-infinitv-custom/releases/tag/v1.9.1-custom
+    - ตำแหน่งไฟล์ในเครื่อง: D:\IPTV & Streaming App\app-universal-debug.apk (ขนาด ~301 MB - อัปเดต 20:54 น.)
+    - ลิงก์ดาวน์โหลดบน GitHub: https://github.com/maisternco551-blip/extreme-infinitv-custom/releases/tag/v1.9.2-custom
     - คุณสมบัติไฟล์: Universal APK รองรับทั้ง Android TV (D-pad 100%), กล่อง Google TV, มือถือ และแท็บเล็ตทุกรุ่น
-    - รวมการแก้ไขล่าสุด: ปุ่มลบแบบ In-App Modal, หน้าเล่นหนังเล่นได้ทุกเรื่อง, ตรวจสอบสถานะลิงก์ Real-time
+    - ฝัง Supabase Anon Key ที่ถูกต้อง 100% เชื่อมต่อและดึงข้อมูลหนัง 1,071 เรื่องอัตโนมัติตั้งแต่เปิดแอปครั้งแรก (Zero-Config)
 
 --------------------------------------------------------------------------------
 4. การอัปเดตฟังก์ชันระบบล่าสุด (Recent Fixes & Enhancements)
