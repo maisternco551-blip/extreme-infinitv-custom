@@ -3,7 +3,6 @@ import Sidebar from "@/components/Sidebar.astro"
 import TitleBar from "@/components/TitleBar.astro"
 import WindowResizeEdges from "@/components/WindowResizeEdges.astro"
 import CatalogWarmingIndicator from "@/components/CatalogWarmingIndicator.svelte"
-import SmartCodeImporter from "@/components/SmartCodeImporter.svelte"
 import pkg from "../../package.json"
 import { TV_ROUTE_TABLE } from "@/scripts/lib/tv-routes"
 import "../styles/global.css"
@@ -412,7 +411,6 @@ const appMode = import.meta.env.PUBLIC_APP_MODE || ""
       injectVersion()
     </script>
     <CatalogWarmingIndicator client:idle />
-    <SmartCodeImporter client:load />
   </body>
 </html>
 

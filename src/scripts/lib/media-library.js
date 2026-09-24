@@ -299,3 +299,153 @@ export async function exportLibrary(playlistId) {
     seriesDetails
   }
 }
+
+/**
+ * Robust brace matching to extract all top-level { ... } objects from text
+ */
+export function extractTopLevelObjects(text) {
+  const objects = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let quoteChar = ""
+  let escape = false
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (char === "\\") {
+      escape = true
+      continue
+    }
+    if (!inString && (char === '"' || char === "'" || char === "`")) {
+      inString = true
+      quoteChar = char
+      continue
+    }
+    if (inString && char === quoteChar) {
+      inString = false
+      continue
+    }
+    if (!inString) {
+      if (char === "{") {
+        if (depth === 0) start = i
+        depth++
+      } else if (char === "}") {
+        depth--
+        if (depth === 0 && start !== -1) {
+          const chunk = text.slice(start, i + 1)
+          try {
+            const obj = new Function(`"use strict"; return (${chunk});`)()
+            if (obj && typeof obj === "object") objects.push(obj)
+          } catch (e) {}
+          start = -1
+        }
+      }
+    }
+  }
+  return objects
+}
+
+/**
+ * Universal loose code parser supporting multiple movies, series, arrays, and objects
+ */
+export function parseLooseMediaCode(text) {
+  if (!text || !text.trim()) {
+    return { movies: [], series: [], error: null }
+  }
+
+  const raw = text.trim()
+  let rawItems = []
+
+  // Method 1: Direct JSON parse
+  try {
+    const direct = JSON.parse(raw)
+    rawItems = Array.isArray(direct) ? direct : [direct]
+  } catch (_) {
+    // Method 2: Bracket wrap and comma fix
+    try {
+      let wrapped = raw
+      if (!wrapped.startsWith("[")) {
+        wrapped = wrapped.replace(/\}\s*\{/g, "},\n{")
+        wrapped = wrapped.replace(/,\s*$/, "")
+        wrapped = "[" + wrapped + "]"
+      }
+      const fn = new Function(`"use strict"; return (${wrapped});`)
+      const res = fn()
+      rawItems = Array.isArray(res) ? res : [res]
+    } catch (_2) {
+      rawItems = extractTopLevelObjects(raw)
+    }
+  }
+
+  if (!rawItems || rawItems.length === 0) {
+    rawItems = extractTopLevelObjects(raw)
+  }
+
+  if (!rawItems || rawItems.length === 0) {
+    return { movies: [], series: [], error: "ไม่พบข้อมูลที่อ่านได้ กรุณาตรวจสอบรูปแบบโค้ด" }
+  }
+
+  const detectedMovies = []
+  const detectedSeries = []
+
+  for (const item of rawItems) {
+    if (!item || typeof item !== "object") continue
+
+    if (Array.isArray(item.stations) && item.stations.length > 0) {
+      const validStations = item.stations.filter((st) => st && (st.url || st.link))
+      if (validStations.length > 0) {
+        const isEpisodeSeries = validStations.some((st) => {
+          const n = String(st.name || "").trim().toLowerCase()
+          return /^(ep|ตอน|e\d|s\d|part|ch)/i.test(n) || n.includes("ep.") || n.includes("ep ")
+        })
+
+        if (isEpisodeSeries) {
+          detectedSeries.push({
+            name: String(item.name || item.title || "ซีรีส์ไม่มีชื่อ").trim(),
+            image: item.image || item.logo || item.cover || "",
+            category: item.category || "ซีรีส์",
+            referer: item.referer || "",
+            stations: validStations
+          })
+        } else {
+          for (const st of validStations) {
+            detectedMovies.push({
+              name: String(st.name || st.title || "ภาพยนตร์ไม่มีชื่อ").trim(),
+              image: st.image || st.logo || item.image || item.logo || "",
+              url: st.url || st.link,
+              category: st.category || item.category || "ภาพยนตร์",
+              referer: st.referer || item.referer || ""
+            })
+          }
+        }
+      }
+    } else if (Array.isArray(item.movies) && item.movies.length > 0) {
+      for (const m of item.movies) {
+        if (m && (m.url || m.link)) {
+          detectedMovies.push({
+            name: String(m.name || m.title || "ภาพยนตร์ไม่มีชื่อ").trim(),
+            image: m.image || m.logo || m.cover || "",
+            url: m.url || m.link,
+            category: m.category || item.category || "ภาพยนตร์",
+            referer: m.referer || item.referer || ""
+          })
+        }
+      }
+    } else if (item.url || item.link) {
+      detectedMovies.push({
+        name: String(item.name || item.title || "ภาพยนตร์ไม่มีชื่อ").trim(),
+        image: item.image || item.logo || item.cover || "",
+        url: item.url || item.link,
+        category: item.category || "ภาพยนตร์",
+        referer: item.referer || ""
+      })
+    }
+  }
+
+  return { movies: detectedMovies, series: detectedSeries, error: null }
+}

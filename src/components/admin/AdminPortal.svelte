@@ -13,6 +13,7 @@
     saveEpisode,
     deleteEpisode,
     exportLibrary,
+    parseLooseMediaCode,
     VOD_TTL
   } from "@/scripts/lib/media-library.js"
   import { setCached } from "@/scripts/lib/cache.js"
@@ -317,54 +318,8 @@
   }
 
   // --- Smart Importer Logic ---
-  function parseLooseCode(code) {
-    const trimmed = code.trim()
-    if (!trimmed) return { movies: [], series: [], error: null }
-
-    let parsed = null
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch (_) {
-      try {
-        const cleaned = trimmed.replace(/^[\s\S]*?(\[[\s\S]*\]|\{[\s\S]*\})[\s\S]*$/, "$1")
-        const func = new Function(`"use strict"; return (${cleaned});`)
-        parsed = func()
-      } catch (err2) {
-        return { movies: [], series: [], error: "รูปแบบโค้ดไม่ถูกต้อง กรุณาตรวจสอบวงเล็บหรือเครื่องหมายจุลภาค" }
-      }
-    }
-
-    if (!parsed) return { movies: [], series: [], error: "ไม่พบข้อมูลที่อ่านได้" }
-    const items = Array.isArray(parsed) ? parsed : [parsed]
-    const detectedMovies = []
-    const detectedSeries = []
-
-    for (const item of items) {
-      if (!item || typeof item !== "object") continue
-      if (Array.isArray(item.stations) && item.stations.length > 0) {
-        detectedSeries.push({
-          name: item.name || "ซีรีส์ไม่มีชื่อ",
-          image: item.image || item.logo || "",
-          category: item.category || "ซีรีส์",
-          referer: item.referer || "",
-          stations: item.stations
-        })
-      } else if (item.url) {
-        detectedMovies.push({
-          name: item.name || "ภาพยนตร์ไม่มีชื่อ",
-          image: item.image || item.logo || "",
-          url: item.url,
-          category: item.category || "ภาพยนตร์",
-          referer: item.referer || ""
-        })
-      }
-    }
-
-    return { movies: detectedMovies, series: detectedSeries, error: null }
-  }
-
   function handleImportInput() {
-    importParseResult = parseLooseCode(rawImportCode)
+    importParseResult = parseLooseMediaCode(rawImportCode)
     importStatus = { text: "", type: "" }
   }
 
