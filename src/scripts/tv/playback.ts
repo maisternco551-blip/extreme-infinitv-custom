@@ -78,6 +78,8 @@ export interface TvPlayVodInput {
   containerExt?: string | null
   resumeSeconds?: number
   durationSeconds?: number
+  directUrl?: string | null
+  referer?: string | null
 }
 
 export interface TvPlayEpisodeInput {
@@ -91,6 +93,8 @@ export interface TvPlayEpisodeInput {
   logo?: string | null
   containerExt?: string | null
   resumeSeconds?: number
+  directUrl?: string | null
+  referer?: string | null
 }
 
 export interface TvPlayCatchupInput {
@@ -682,11 +686,15 @@ export async function playVod(input: TvPlayVodInput, events: TvPlaybackEvents = 
   lastPlayAttempt = () => playVod(input, events)
   const generation = beginPlayAttempt()
   return guardPlayback(async () => {
-    const creds = await resolvePlaylistCreds(input.playlistId)
-    if (isStalePlayAttempt(generation)) return false
-    if (!creds?.host || !creds.user || !creds.pass) return failPlayback()
-    const src = buildMovieStreamUrl(creds, input.movieId, input.containerExt ?? null)
-    if (!isCastableSrc(src)) return failPlayback()
+    let src = input.directUrl || null
+    if (!src) {
+      const creds = await resolvePlaylistCreds(input.playlistId)
+      if (isStalePlayAttempt(generation)) return false
+      if (creds?.host && creds.user && creds.pass) {
+        src = buildMovieStreamUrl(creds, input.movieId, input.containerExt ?? null)
+      }
+    }
+    if (!src || !isCastableSrc(src)) return failPlayback()
 
     const descriptor = buildVodCastDescriptor({
       src,
@@ -718,11 +726,15 @@ export async function playEpisode(input: TvPlayEpisodeInput, events: TvPlaybackE
   lastPlayAttempt = () => playEpisode(input, events)
   const generation = beginPlayAttempt()
   return guardPlayback(async () => {
-    const creds = await resolvePlaylistCreds(input.playlistId)
-    if (isStalePlayAttempt(generation)) return false
-    if (!creds?.host || !creds.user || !creds.pass) return failPlayback()
-    const src = buildSeriesStreamUrl(creds, input.episodeId, input.containerExt ?? null)
-    if (!isCastableSrc(src)) return failPlayback()
+    let src = input.directUrl || null
+    if (!src) {
+      const creds = await resolvePlaylistCreds(input.playlistId)
+      if (isStalePlayAttempt(generation)) return false
+      if (creds?.host && creds.user && creds.pass) {
+        src = buildSeriesStreamUrl(creds, input.episodeId, input.containerExt ?? null)
+      }
+    }
+    if (!src || !isCastableSrc(src)) return failPlayback()
 
     const descriptor = buildVodCastDescriptor({
       src,

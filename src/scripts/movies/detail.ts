@@ -9,8 +9,8 @@ import {
 } from "@/scripts/lib/creds.js"
 import { xtreamApiFetch, resolveStreamUrl } from "@/scripts/lib/xtream-api.js"
 import { isCastRoutingActive, routePlayToCast } from "@/scripts/lib/tv-cast.js"
-import { isCastableSrc, buildVodCastDescriptor } from "@/scripts/lib/tv-cast-descriptor.js"
-import { getCached, setCached } from "@/scripts/lib/cache.js"
+import { getCached, setCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
+import { checkStreamHealth } from "@/scripts/lib/stream-health-checker.js"
 import { ensureVod } from "@/scripts/lib/catalog.js"
 import {
   ensureLoaded as ensurePrefsLoaded,
@@ -485,8 +485,10 @@ function adoptCatalogRow(catalog) {
 // The in-memory catalog is empty on a deep link, so load it instead of giving up on the rail.
 function loadVodCatalog() {
   if (!activePlaylistId) return Promise.resolve([])
-  const cached = getCached(activePlaylistId, "vod")?.data
-  if (cached?.length) return Promise.resolve(cached)
+  const cachedVod = getCached(activePlaylistId, "vod")?.data || []
+  const cachedM3u = getCached(activePlaylistId, "m3u")?.data || []
+  const combined = Array.isArray(cachedM3u) && cachedM3u.length ? [...cachedM3u, ...cachedVod] : [...cachedVod, ...cachedM3u]
+  if (combined.length) return Promise.resolve(combined)
   if (!vodCatalogPromise) {
     vodCatalogPromise = ensureVod(creds, activePlaylistId)
       .then((catalog) => {
@@ -1469,9 +1471,19 @@ async function boot() {
   await ensurePrefsLoaded()
   creds = await loadCreds()
 
-  // Hydrate the basics from the cached VOD list (poster, title, etc.).
-  const list = getCached(active._id, "vod")
-  const catalogMovie = list?.data?.find((entry) => Number(entry.id) === movieId) || null
+  // Hydrate the basics from the cached VOD / M3U list (poster, title, etc.).
+  await hydrateCache(active._id, "vod")
+  await hydrateCache(active._id, "m3u")
+  const vodList = getCached(active._id, "vod")?.data || []
+  const m3uList = getCached(active._id, "m3u")?.data || []
+  const combinedCatalog = Array.isArray(m3uList) && m3uList.length ? [...m3uList, ...vodList] : [...vodList, ...m3uList]
+
+  const catalogMovie = combinedCatalog.find((entry) => 
+    Number(entry.id) === movieId || 
+    String(entry.id) === String(movieId) ||
+    Number(entry.stream_id) === movieId ||
+    String(entry.stream_id) === String(movieId)
+  ) || null
 
   const dl = listDownloads().find(
     (d) => d.source?.kind === "vod" && Number(d.source?.id) === movieId
@@ -1493,18 +1505,33 @@ async function boot() {
   syncFavButton()
   syncWatchButton()
   syncResumeUI()
-  renderLanguagePills(list?.data || [])
+  renderLanguagePills(combinedCatalog)
 
   if (dl?.url) {
     detailSrc = dl.url
     applyDownloadState()
     externalBtnHandle?.refresh()
     playTvBtnHandle?.refresh()
-  } else if (catalogMovie?.url) {
-    detailSrc = catalogMovie.url
+  } else if (catalogMovie?.url || catalogMovie?.directUrl) {
+    detailSrc = catalogMovie.url || catalogMovie.directUrl
     applyDownloadState()
     externalBtnHandle?.refresh()
     playTvBtnHandle?.refresh()
+  }
+
+  if (catalogMovie) {
+    if (metaEl && !metaEl.textContent) {
+      const parts = [catalogMovie.year, catalogMovie.category, catalogMovie.duration].filter(Boolean)
+      if (parts.length) {
+        metaEl.textContent = parts.join(" · ")
+        metaEl.removeAttribute("hidden")
+      }
+    }
+    if (plotEl && (!plotEl.textContent || plotEl.textContent === t("detail.error.failedTryPlay"))) {
+      plotEl.textContent = catalogMovie.plot || catalogMovie.name || ""
+    }
+    settleHero()
+    hideDetailSkeleton()
   }
 
   // Both probes are network-free (hydrate + memory read) and run under one bound,
@@ -1591,8 +1618,10 @@ async function boot() {
       }
     }
   } else if (!providerInfoReady) {
-    if (catalogMovie?.url) {
-      if (plotEl) plotEl.textContent = catalogMovie.name || ""
+    if (catalogMovie?.url || catalogMovie?.directUrl || detailSrc) {
+      if (plotEl && (!plotEl.textContent || plotEl.textContent === t("detail.error.failedTryPlay"))) {
+        plotEl.textContent = catalogMovie?.plot || catalogMovie?.name || ""
+      }
       hideDetailSkeleton()
       settleHero()
     } else {
@@ -1603,6 +1632,26 @@ async function boot() {
       }
       hideDetailSkeleton()
     }
+  }
+
+  // Stream Health Check & Indicator
+  const healthBadgeEl = document.getElementById("movie-detail-health-badge")
+  if (healthBadgeEl && detailSrc) {
+    healthBadgeEl.removeAttribute("hidden")
+    healthBadgeEl.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
+    healthBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span><span>กำลังตรวจสอบ...</span>`
+    
+    checkStreamHealth(detailSrc, catalogMovie?.referer || "").then((health) => {
+      if (health.status === "online") {
+        healthBadgeEl.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+        healthBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>พร้อมเล่น</span>`
+      } else {
+        healthBadgeEl.className = "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20"
+        healthBadgeEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400"></span><span>ลิงก์ขัดข้อง / ต้องแก้ไข</span>`
+      }
+    }).catch(() => {
+      healthBadgeEl.setAttribute("hidden", "")
+    })
   }
 
   populateSimilarRail(enrichRequestIdForThisBoot).catch((err) => {

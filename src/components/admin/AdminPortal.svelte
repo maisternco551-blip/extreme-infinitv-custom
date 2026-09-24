@@ -26,6 +26,11 @@
     pullCatalogFromCloud,
     DEFAULT_SQL_SETUP
   } from "@/scripts/lib/cloud-catalog.js"
+  import {
+    checkStreamHealth,
+    batchCheckStreamHealth,
+    getCachedHealth
+  } from "@/scripts/lib/stream-health-checker.js"
 
   // Auth State
   let authed = $state(false)
@@ -64,6 +69,18 @@
 
   let showEpisodeModal = $state(false)
   let episodeForm = $state({ id: null, episode_num: 1, title: "", url: "", referer: "" })
+
+  // Delete Confirmation Modal State
+  let deleteConfirmation = $state(null)
+  let isDeleting = $state(false)
+
+  // Stream Health State
+  let streamHealthMap = $state(new Map())
+  let isCheckingAllMovies = $state(false)
+  let isCheckingAllEpisodes = $state(false)
+  let movieCheckProgress = $state({ current: 0, total: 0 })
+  let singleCheckingMap = $state({})
+  let modalStreamTestStatus = $state({ text: "", type: "", loading: false })
 
   // Smart Importer State inside Admin
   let rawImportCode = $state("")
@@ -183,13 +200,15 @@
 
   // --- Movie Operations ---
   function openAddMovie() {
+    modalStreamTestStatus = { text: "", type: "", loading: false }
     movieForm = { id: null, name: "", logo: "", url: "", referer: "", category: "ภาพยนตร์", year: new Date().getFullYear().toString() }
     showMovieModal = true
   }
 
   function openEditMovie(m) {
+    modalStreamTestStatus = { text: "", type: "", loading: false }
     movieForm = {
-      id: m.id,
+      id: m.id ?? m.stream_id,
       name: m.name || "",
       logo: m.logo || "",
       url: m.url || m.directUrl || "",
@@ -215,14 +234,144 @@
     }
   }
 
-  async function handleDeleteMovie(id, name) {
-    if (!confirm(`คุณต้องการลบภาพยนตร์เรื่อง "${name}" ใช่หรือไม่?`)) return
+  function handleDeleteMovie(id, name) {
+    deleteConfirmation = {
+      type: "movie",
+      id,
+      name,
+      title: "ยืนยันการลบภาพยนตร์",
+      message: `คุณต้องการลบภาพยนตร์เรื่อง "${name}" ออกจากระบบใช่หรือไม่? การกระทำนี้ไม่สามารถเรียกคืนได้`
+    }
+  }
+
+  async function executeConfirmedDelete() {
+    if (!deleteConfirmation) return
+    const { type, id, name, seriesId } = deleteConfirmation
+    isDeleting = true
     try {
-      await deleteMovie(activeLibrary._id, id)
-      movies = await getLibraryMovies(activeLibrary._id)
-      showToast(`ลบภาพยนตร์ "${name}" เรียบร้อยแล้ว`)
+      if (type === "movie") {
+        await deleteMovie(activeLibrary._id, id, name)
+        // Immediate optimistic UI update
+        movies = movies.filter((m) => {
+          const mId = m.id ?? m.stream_id
+          const matchId = (id != null && String(mId) === String(id)) || (!isNaN(Number(id)) && Number(mId) === Number(id))
+          const matchName = name ? (m.name || "").trim().toLowerCase() === name.trim().toLowerCase() : false
+          return !matchId && !matchName
+        })
+        showToast(`ลบภาพยนตร์ "${name}" เรียบร้อยแล้ว`)
+      } else if (type === "series") {
+        await deleteSeries(activeLibrary._id, id)
+        seriesList = seriesList.filter((s) => {
+          const sId = s.id ?? s.series_id
+          return String(sId) !== String(id) && Number(sId) !== Number(id)
+        })
+        if (selectedSeries && (String(selectedSeries.id) === String(id) || String(selectedSeries.series_id) === String(id))) {
+          isEditingEpisodes = false
+          selectedSeries = null
+        }
+        showToast(`ลบซีรีส์ "${name}" เรียบร้อยแล้ว`)
+      } else if (type === "episode") {
+        await deleteEpisode(activeLibrary._id, seriesId, id)
+        selectedSeriesInfo = await getSeriesDetails(activeLibrary._id, seriesId)
+        await calculateTotalEpisodes()
+        showToast(`ลบ "${name}" เรียบร้อยแล้ว`)
+      }
+      deleteConfirmation = null
     } catch (e) {
       showToast("ลบไม่สำเร็จ: " + e.message, "error")
+    } finally {
+      isDeleting = false
+    }
+  }
+
+  // --- Stream Health Checking Functions ---
+  async function handleCheckSingleStream(id, url, referer) {
+    if (!url) return
+    singleCheckingMap[id] = true
+    try {
+      const res = await checkStreamHealth(url, referer, 5000)
+      const nextMap = new Map(streamHealthMap)
+      nextMap.set(id, res)
+      streamHealthMap = nextMap
+    } catch (_) {} finally {
+      singleCheckingMap[id] = false
+    }
+  }
+
+  async function handleCheckAllMovies() {
+    if (isCheckingAllMovies || !filteredMovies.length) return
+    isCheckingAllMovies = true
+    movieCheckProgress = { current: 0, total: filteredMovies.length }
+
+    const items = filteredMovies.map((m) => ({
+      id: m.id ?? m.stream_id,
+      url: m.url || m.directUrl,
+      referer: m.referer
+    }))
+
+    try {
+      await batchCheckStreamHealth(items, (id, res, current, total) => {
+        movieCheckProgress = { current, total }
+        const nextMap = new Map(streamHealthMap)
+        nextMap.set(id, res)
+        streamHealthMap = nextMap
+      }, 5)
+      showToast(`ตรวจสอบสถานะภาพยนตร์เสร็จสิ้น ${filteredMovies.length} เรื่อง`)
+    } catch (e) {
+      showToast("เกิดข้อผิดพลาดในการตรวจสอบ: " + e.message, "error")
+    } finally {
+      isCheckingAllMovies = false
+    }
+  }
+
+  async function handleTestModalStreamUrl(url, referer) {
+    if (!url || !url.trim()) {
+      modalStreamTestStatus = { text: "กรุณาใส่ลิงก์สตรีมก่อนกดทดสอบ", type: "error", loading: false }
+      return
+    }
+    modalStreamTestStatus = { text: "กำลังทดสอบเชื่อมต่อสัญญาณ...", type: "info", loading: true }
+    try {
+      const res = await checkStreamHealth(url.trim(), referer, 5000)
+      if (res.status === "online") {
+        modalStreamTestStatus = {
+          text: `🟢 ลิงก์พร้อมเล่น (${res.latencyMs ? res.latencyMs + "ms" : "สมบูรณ์"})`,
+          type: "success",
+          loading: false
+        }
+      } else {
+        modalStreamTestStatus = {
+          text: `🔴 ลิงก์เสียหรือเปิดไม่ได้: ${res.message || "เซิร์ฟเวอร์ไม่ตอบสนอง"}`,
+          type: "error",
+          loading: false
+        }
+      }
+    } catch (e) {
+      modalStreamTestStatus = { text: "ตรวจสอบไม่สำเร็จ: " + e.message, type: "error", loading: false }
+    }
+  }
+
+  async function handleCheckAllEpisodes() {
+    const eps = selectedSeriesInfo?.episodes?.["1"] || []
+    if (isCheckingAllEpisodes || !eps.length) return
+    isCheckingAllEpisodes = true
+
+    const items = eps.map((ep) => ({
+      id: ep.id,
+      url: ep.url || ep._directUrl,
+      referer: ep.referer
+    }))
+
+    try {
+      await batchCheckStreamHealth(items, (id, res) => {
+        const nextMap = new Map(streamHealthMap)
+        nextMap.set(id, res)
+        streamHealthMap = nextMap
+      }, 4)
+      showToast(`ตรวจสอบสถานะตอนทั้งหมดเสร็จสิ้น (${eps.length} ตอน)`)
+    } catch (e) {
+      showToast("เกิดข้อผิดพลาด: " + e.message, "error")
+    } finally {
+      isCheckingAllEpisodes = false
     }
   }
 
@@ -258,18 +407,13 @@
     }
   }
 
-  async function handleDeleteSeries(id, name) {
-    if (!confirm(`คุณต้องการลบซีรีส์เรื่อง "${name}" พร้อมทุกตอนใช่หรือไม่?`)) return
-    try {
-      await deleteSeries(activeLibrary._id, id)
-      seriesList = await getLibrarySeries(activeLibrary._id)
-      if (selectedSeries && selectedSeries.id === id) {
-        isEditingEpisodes = false
-        selectedSeries = null
-      }
-      showToast(`ลบซีรีส์ "${name}" เรียบร้อยแล้ว`)
-    } catch (e) {
-      showToast("ลบไม่สำเร็จ: " + e.message, "error")
+  function handleDeleteSeries(id, name) {
+    deleteConfirmation = {
+      type: "series",
+      id,
+      name,
+      title: "ยืนยันการลบซีรีส์",
+      message: `คุณต้องการลบซีรีส์ "${name}" พร้อมข้อมูลทุกตอนใช่หรือไม่? การกระทำนี้ไม่สามารถเรียกคืนได้`
     }
   }
 
@@ -281,6 +425,7 @@
   }
 
   function openAddEpisode() {
+    modalStreamTestStatus = { text: "", type: "", loading: false }
     const currentEps = selectedSeriesInfo?.episodes?.["1"] || []
     const nextEpNum = currentEps.length + 1
     episodeForm = {
@@ -294,6 +439,7 @@
   }
 
   function openEditEpisode(ep) {
+    modalStreamTestStatus = { text: "", type: "", loading: false }
     episodeForm = {
       id: ep.id,
       episode_num: ep.episode_num,
@@ -320,15 +466,14 @@
     }
   }
 
-  async function handleDeleteEpisode(epId, epTitle) {
-    if (!confirm(`ต้องการลบ "${epTitle}" ใช่หรือไม่?`)) return
-    try {
-      await deleteEpisode(activeLibrary._id, selectedSeries.id, epId)
-      selectedSeriesInfo = await getSeriesDetails(activeLibrary._id, selectedSeries.id)
-      await calculateTotalEpisodes()
-      showToast(`ลบ "${epTitle}" เรียบร้อยแล้ว`)
-    } catch (e) {
-      showToast("ลบตอนไม่สำเร็จ: " + e.message, "error")
+  function handleDeleteEpisode(epId, epTitle) {
+    deleteConfirmation = {
+      type: "episode",
+      id: epId,
+      name: epTitle,
+      seriesId: selectedSeries?.id,
+      title: "ยืนยันการลบตอนซีรีส์",
+      message: `คุณต้องการลบ "${epTitle}" ออกจากซีรีส์ใช่หรือไม่?`
     }
   }
 
@@ -1024,13 +1169,28 @@
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-2.5 text-gray-500"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             </div>
 
-            <button
-              type="button"
-              onclick={openAddMovie}
-              class="px-4 py-2.5 rounded-xl bg-[#e8590c] hover:bg-[#f97316] text-white text-xs font-bold shadow-md shadow-[#e8590c]/20 transition-all cursor-pointer flex items-center justify-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              เพิ่มภาพยนตร์เรื่องใหม่
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isCheckingAllMovies || !filteredMovies.length}
+                onclick={handleCheckAllMovies}
+                class="px-3.5 py-2.5 rounded-xl bg-[#1e2638] hover:bg-[#28334a] border border-[#2a3650] text-gray-200 text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50">
+                {#if isCheckingAllMovies}
+                  <span class="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></span>
+                  <span>กำลังตรวจ ({movieCheckProgress.current}/{movieCheckProgress.total})...</span>
+                {:else}
+                  <span>⚡ ตรวจสอบทุกลิงก์</span>
+                {/if}
+              </button>
+
+              <button
+                type="button"
+                onclick={openAddMovie}
+                class="px-4 py-2.5 rounded-xl bg-[#e8590c] hover:bg-[#f97316] text-white text-xs font-bold shadow-md shadow-[#e8590c]/20 transition-all cursor-pointer flex items-center justify-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                เพิ่มภาพยนตร์เรื่องใหม่
+              </button>
+            </div>
           </div>
 
           <!-- Movies Table / Cards -->
@@ -1053,6 +1213,9 @@
                   </thead>
                   <tbody class="divide-y divide-[#171d2b]">
                     {#each filteredMovies as m}
+                      {@const mId = m.id ?? m.stream_id}
+                      {@const status = streamHealthMap.get(mId)}
+                      {@const isLoading = singleCheckingMap[mId]}
                       <tr class="hover:bg-[#121722] transition-colors">
                         <td class="py-2 px-4">
                           <img
@@ -1063,8 +1226,43 @@
                           />
                         </td>
                         <td class="py-2 px-4 font-semibold text-white">
-                          <div class="truncate max-w-xs md:max-w-md">{m.name}</div>
-                          <div class="text-[10px] text-gray-500 font-mono truncate max-w-xs">{m.url}</div>
+                          <div class="flex items-center gap-2 max-w-xs md:max-w-md">
+                            <span class="truncate">{m.name}</span>
+                            {#if isLoading}
+                              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-spin"></span>
+                                ตรวจ...
+                              </span>
+                            {:else if status?.status === 'online'}
+                              <button
+                                type="button"
+                                onclick={() => handleCheckSingleStream(mId, m.url || m.directUrl, m.referer)}
+                                title="พร้อมเล่น (คลิกเพื่อตรวจซ้ำ)"
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors cursor-pointer whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                พร้อมเล่น
+                              </button>
+                            {:else if status?.status === 'offline'}
+                              <button
+                                type="button"
+                                onclick={() => handleCheckSingleStream(mId, m.url || m.directUrl, m.referer)}
+                                title={status.message || "ลิงก์ดับ/เสีย (คลิกเพื่อตรวจซ้ำ)"}
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-colors cursor-pointer whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                ลิงก์เสีย
+                              </button>
+                            {:else}
+                              <button
+                                type="button"
+                                onclick={() => handleCheckSingleStream(mId, m.url || m.directUrl, m.referer)}
+                                title="คลิกเพื่อตรวจสอบสถานะสตรีม"
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-[#1a2130] text-gray-400 hover:text-gray-200 border border-[#2a3650] hover:border-gray-500 transition-colors cursor-pointer whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                                ตรวจลิงก์
+                              </button>
+                            {/if}
+                          </div>
+                          <div class="text-[10px] text-gray-500 font-mono truncate max-w-xs">{m.url || m.directUrl}</div>
                         </td>
                         <td class="py-2 px-4 text-gray-300">{m.category || "ภาพยนตร์"}</td>
                         <td class="py-2 px-4 text-gray-400">{m.year || "-"}</td>
@@ -1077,7 +1275,7 @@
                           </button>
                           <button
                             type="button"
-                            onclick={() => handleDeleteMovie(m.id, m.name)}
+                            onclick={() => handleDeleteMovie(m.id ?? m.stream_id, m.name)}
                             class="px-2.5 py-1 rounded bg-red-500/15 hover:bg-red-500/25 text-red-300 text-xs font-medium transition-colors cursor-pointer">
                             ลบ
                           </button>
@@ -1114,12 +1312,26 @@
                 </div>
               </div>
 
-              <button
-                type="button"
-                onclick={openAddEpisode}
-                class="px-4 py-2 rounded-xl bg-[#e8590c] hover:bg-[#f97316] text-white text-xs font-bold shadow-md shadow-[#e8590c]/20 transition-all cursor-pointer flex items-center gap-2">
-                + เพิ่มตอนใหม่
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isCheckingAllEpisodes || !selectedSeriesInfo?.episodes?.["1"]?.length}
+                  onclick={handleCheckAllEpisodes}
+                  class="px-3.5 py-2 rounded-xl bg-[#171d2b] hover:bg-[#20283a] border border-[#2a3650] text-gray-200 text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50">
+                  {#if isCheckingAllEpisodes}
+                    <span class="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></span>
+                    <span>กำลังตรวจ...</span>
+                  {:else}
+                    <span>⚡ ตรวจสอบทุกลิงก์</span>
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  onclick={openAddEpisode}
+                  class="px-4 py-2 rounded-xl bg-[#e8590c] hover:bg-[#f97316] text-white text-xs font-bold shadow-md shadow-[#e8590c]/20 transition-all cursor-pointer flex items-center gap-2">
+                  + เพิ่มตอนใหม่
+                </button>
+              </div>
             </div>
 
             <!-- Episodes Table -->
@@ -1140,9 +1352,48 @@
                   </thead>
                   <tbody class="divide-y divide-[#171d2b]">
                     {#each selectedSeriesInfo.episodes["1"] as ep}
+                      {@const status = streamHealthMap.get(ep.id)}
+                      {@const isLoading = singleCheckingMap[ep.id]}
                       <tr class="hover:bg-[#121722] transition-colors">
                         <td class="py-3 px-4 font-mono font-bold text-[#f97316]">EP.{ep.episode_num}</td>
-                        <td class="py-3 px-4 font-medium text-white">{ep.title || `EP.${ep.episode_num}`}</td>
+                        <td class="py-3 px-4 font-medium text-white">
+                          <div class="flex items-center gap-2">
+                            <span>{ep.title || `EP.${ep.episode_num}`}</span>
+                            {#if isLoading}
+                              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-spin"></span>
+                                ตรวจ...
+                              </span>
+                            {:else if status?.status === 'online'}
+                              <button
+                                type="button"
+                                onclick={() => handleCheckSingleStream(ep.id, ep.url || ep._directUrl, ep.referer)}
+                                title="พร้อมเล่น (คลิกเพื่อตรวจซ้ำ)"
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors cursor-pointer whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                พร้อมเล่น
+                              </button>
+                            {:else if status?.status === 'offline'}
+                              <button
+                                type="button"
+                                onclick={() => handleCheckSingleStream(ep.id, ep.url || ep._directUrl, ep.referer)}
+                                title={status.message || "ลิงก์ดับ/เสีย (คลิกเพื่อตรวจซ้ำ)"}
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-colors cursor-pointer whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                ลิงก์เสีย
+                              </button>
+                            {:else}
+                              <button
+                                type="button"
+                                onclick={() => handleCheckSingleStream(ep.id, ep.url || ep._directUrl, ep.referer)}
+                                title="คลิกเพื่อตรวจสอบสถานะสตรีม"
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-[#1a2130] text-gray-400 hover:text-gray-200 border border-[#2a3650] hover:border-gray-500 transition-colors cursor-pointer whitespace-nowrap">
+                                <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                                ตรวจลิงก์
+                              </button>
+                            {/if}
+                          </div>
+                        </td>
                         <td class="py-3 px-4 text-gray-400 font-mono truncate max-w-xs md:max-w-md">{ep.url}</td>
                         <td class="py-3 px-4 text-right whitespace-nowrap">
                           <button
@@ -1608,13 +1859,32 @@
           </div>
 
           <div>
-            <label class="block font-medium text-gray-400 mb-1">ลิงก์วิดีโอสตรีม (.m3u8 หรือ .mp4) *</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block font-medium text-gray-400">ลิงก์วิดีโอสตรีม (.m3u8 หรือ .mp4) *</label>
+              <button
+                type="button"
+                onclick={() => handleTestModalStreamUrl(movieForm.url, movieForm.referer)}
+                disabled={modalStreamTestStatus.loading}
+                class="text-[11px] text-orange-400 hover:text-orange-300 font-medium flex items-center gap-1 cursor-pointer">
+                {#if modalStreamTestStatus.loading}
+                  <span class="w-3 h-3 border-2 border-orange-400 border-t-transparent rounded-full animate-spin"></span>
+                  กำลังตรวจ...
+                {:else}
+                  ⚡ ทดสอบลิงก์นี้
+                {/if}
+              </button>
+            </div>
             <input
               type="text"
               bind:value={movieForm.url}
               placeholder="https://.../video.m3u8"
               class="w-full px-3 py-2 bg-[#141924] border border-[#1f283c] rounded-xl text-white font-mono text-[11px] focus:outline-none focus:border-[#e8590c]"
             />
+            {#if modalStreamTestStatus.text}
+              <div class="mt-1 text-[11px] font-medium {modalStreamTestStatus.type === 'success' ? 'text-emerald-400' : modalStreamTestStatus.type === 'error' ? 'text-rose-400' : 'text-amber-400'}">
+                {modalStreamTestStatus.text}
+              </div>
+            {/if}
           </div>
 
           <div>
@@ -1777,13 +2047,32 @@
           </div>
 
           <div>
-            <label class="block font-medium text-gray-400 mb-1">ลิงก์วิดีโอสตรีม (.m3u8 หรือ .mp4) *</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block font-medium text-gray-400">ลิงก์วิดีโอสตรีม (.m3u8 หรือ .mp4) *</label>
+              <button
+                type="button"
+                onclick={() => handleTestModalStreamUrl(episodeForm.url, episodeForm.referer)}
+                disabled={modalStreamTestStatus.loading}
+                class="text-[11px] text-orange-400 hover:text-orange-300 font-medium flex items-center gap-1 cursor-pointer">
+                {#if modalStreamTestStatus.loading}
+                  <span class="w-3 h-3 border-2 border-orange-400 border-t-transparent rounded-full animate-spin"></span>
+                  กำลังตรวจ...
+                {:else}
+                  ⚡ ทดสอบลิงก์นี้
+                {/if}
+              </button>
+            </div>
             <input
               type="text"
               bind:value={episodeForm.url}
-              placeholder="https://.../audio.m3u8"
+              placeholder="https://.../video.m3u8"
               class="w-full px-3 py-2 bg-[#141924] border border-[#1f283c] rounded-xl text-white font-mono text-[11px] focus:outline-none focus:border-[#e8590c]"
             />
+            {#if modalStreamTestStatus.text}
+              <div class="mt-1 text-[11px] font-medium {modalStreamTestStatus.type === 'success' ? 'text-emerald-400' : modalStreamTestStatus.type === 'error' ? 'text-rose-400' : 'text-amber-400'}">
+                {modalStreamTestStatus.text}
+              </div>
+            {/if}
           </div>
 
           <div>
@@ -1809,6 +2098,58 @@
             onclick={handleSaveEpisode}
             class="px-5 py-2 rounded-xl bg-[#e8590c] hover:bg-[#f97316] text-white font-bold text-xs shadow-md shadow-[#e8590c]/20 cursor-pointer">
             บันทึกตอน
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- MODAL: DELETE CONFIRMATION -->
+  {#if deleteConfirmation}
+    <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-md bg-[#0f131a] border border-red-500/30 rounded-3xl p-6 shadow-2xl flex flex-col gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-2xl bg-red-500/15 text-red-400 border border-red-500/30 flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18"/>
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              <line x1="10" y1="11" x2="10" y2="17"/>
+              <line x1="14" y1="11" x2="14" y2="17"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-white">
+              {deleteConfirmation.title || "ยืนยันการลบ"}
+            </h3>
+            <p class="text-xs text-red-400 font-medium">การกระทำนี้ไม่สามารถย้อนกลับได้</p>
+          </div>
+        </div>
+
+        <div class="p-3.5 rounded-xl bg-[#141924] border border-[#1f283c] text-xs text-gray-300 leading-relaxed">
+          {deleteConfirmation.message}
+        </div>
+
+        <div class="flex items-center justify-end gap-2.5 mt-2">
+          <button
+            type="button"
+            onclick={() => { deleteConfirmation = null; }}
+            disabled={isDeleting}
+            class="px-4 py-2.5 rounded-xl bg-[#171d2b] hover:bg-[#20283a] text-gray-300 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50">
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onclick={executeConfirmedDelete}
+            disabled={isDeleting}
+            class="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-600/30 transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50">
+            {#if isDeleting}
+              <span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              กำลังลบ...
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
+              ยืนยันการลบ
+            {/if}
           </button>
         </div>
       </div>

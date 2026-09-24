@@ -35,8 +35,12 @@ export async function ensureActiveLibrary() {
 export async function getLibraryMovies(playlistId) {
   if (!playlistId) return []
   await hydrateCache(playlistId, "m3u")
-  const cached = getCached(playlistId, "m3u")
-  return Array.isArray(cached?.data) ? [...cached.data] : []
+  await hydrateCache(playlistId, "vod")
+  const m3uCached = getCached(playlistId, "m3u")
+  const vodCached = getCached(playlistId, "vod")
+  const m3uList = Array.isArray(m3uCached?.data) ? m3uCached.data : []
+  const vodList = Array.isArray(vodCached?.data) ? vodCached.data : []
+  return m3uList.length > 0 ? [...m3uList] : [...vodList]
 }
 
 /**
@@ -67,7 +71,8 @@ export async function saveMovie(playlistId, movieData) {
   if (!playlistId) throw new Error("No playlist specified")
   const movies = await getLibraryMovies(playlistId)
 
-  const id = movieData.id ? Number(movieData.id) : Date.now()
+  const rawId = movieData.id ?? movieData.stream_id
+  const id = rawId ? (isNaN(Number(rawId)) ? rawId : Number(rawId)) : Date.now()
   const name = String(movieData.name || "").trim()
   const year = (name.match(/\((\d{4})\)/) || [])[1] || String(movieData.year || "").trim()
 
@@ -88,7 +93,10 @@ export async function saveMovie(playlistId, movieData) {
     referer: movieData.referer || ""
   }
 
-  const existingIndex = movies.findIndex((m) => Number(m.id) === id)
+  const existingIndex = movies.findIndex((m) => {
+    const mId = m.id ?? m.stream_id
+    return String(mId) === String(id) || (id && Number(mId) === Number(id))
+  })
   if (existingIndex >= 0) {
     movies[existingIndex] = { ...movies[existingIndex], ...formattedMovie }
   } else {
@@ -96,8 +104,25 @@ export async function saveMovie(playlistId, movieData) {
   }
 
   setCached(playlistId, "m3u", movies, VOD_TTL)
+
+  // Also sync to vod cache if present
+  const vodCached = getCached(playlistId, "vod")
+  if (Array.isArray(vodCached?.data)) {
+    const vodIdx = vodCached.data.findIndex((m) => {
+      const mId = m.id ?? m.stream_id
+      return String(mId) === String(id) || (id && Number(mId) === Number(id))
+    })
+    if (vodIdx >= 0) {
+      vodCached.data[vodIdx] = { ...vodCached.data[vodIdx], ...formattedMovie }
+    } else {
+      vodCached.data.unshift(formattedMovie)
+    }
+    setCached(playlistId, "vod", vodCached.data, VOD_TTL)
+  }
+
   if (typeof document !== "undefined") {
     document.dispatchEvent(new CustomEvent("xt:cache-revalidated", { detail: { entryId: playlistId, kind: "m3u" } }))
+    document.dispatchEvent(new CustomEvent("xt:cache-revalidated", { detail: { entryId: playlistId, kind: "vod" } }))
     document.dispatchEvent(new CustomEvent("xt:active-changed"))
   }
   return formattedMovie
@@ -106,13 +131,51 @@ export async function saveMovie(playlistId, movieData) {
 /**
  * Delete a movie from library
  */
-export async function deleteMovie(playlistId, movieId) {
+export async function deleteMovie(playlistId, movieId, movieName = "") {
   if (!playlistId) throw new Error("No playlist specified")
-  const movies = await getLibraryMovies(playlistId)
-  const filtered = movies.filter((m) => Number(m.id) !== Number(movieId))
-  setCached(playlistId, "m3u", filtered, VOD_TTL)
+  await hydrateCache(playlistId, "m3u")
+  await hydrateCache(playlistId, "vod")
+
+  const targetIdStr = movieId != null ? String(movieId).trim() : ""
+  const targetName = movieName ? movieName.trim().toLowerCase() : ""
+
+  const filterFn = (m) => {
+    const idStr = m.id != null ? String(m.id).trim() : ""
+    const streamIdStr = m.stream_id != null ? String(m.stream_id).trim() : ""
+
+    // Match by ID or stream_id string equality
+    if (targetIdStr && (idStr === targetIdStr || streamIdStr === targetIdStr)) {
+      return false
+    }
+    // Match by numeric comparison if both are valid numbers
+    if (targetIdStr && !isNaN(Number(targetIdStr))) {
+      const numTarget = Number(targetIdStr)
+      if (Number(m.id) === numTarget || Number(m.stream_id) === numTarget) {
+        return false
+      }
+    }
+    // Fallback match by exact movie name
+    if (targetName && (m.name || "").trim().toLowerCase() === targetName) {
+      return false
+    }
+    return true
+  }
+
+  const m3uCached = getCached(playlistId, "m3u")
+  if (Array.isArray(m3uCached?.data)) {
+    const filteredM3u = m3uCached.data.filter(filterFn)
+    setCached(playlistId, "m3u", filteredM3u, VOD_TTL)
+  }
+
+  const vodCached = getCached(playlistId, "vod")
+  if (Array.isArray(vodCached?.data)) {
+    const filteredVod = vodCached.data.filter(filterFn)
+    setCached(playlistId, "vod", filteredVod, VOD_TTL)
+  }
+
   if (typeof document !== "undefined") {
     document.dispatchEvent(new CustomEvent("xt:cache-revalidated", { detail: { entryId: playlistId, kind: "m3u" } }))
+    document.dispatchEvent(new CustomEvent("xt:cache-revalidated", { detail: { entryId: playlistId, kind: "vod" } }))
     document.dispatchEvent(new CustomEvent("xt:active-changed"))
   }
   return true
@@ -191,7 +254,14 @@ export async function saveSeries(playlistId, seriesData) {
 export async function deleteSeries(playlistId, seriesId) {
   if (!playlistId) throw new Error("No playlist specified")
   const seriesList = await getLibrarySeries(playlistId)
-  const filtered = seriesList.filter((s) => Number(s.id) !== Number(seriesId))
+  const targetIdStr = seriesId != null ? String(seriesId).trim() : ""
+  const filtered = seriesList.filter((s) => {
+    const sId = s.id ?? s.series_id
+    const sIdStr = sId != null ? String(sId).trim() : ""
+    if (targetIdStr && sIdStr === targetIdStr) return false
+    if (targetIdStr && !isNaN(Number(targetIdStr)) && Number(sId) === Number(targetIdStr)) return false
+    return true
+  })
   setCached(playlistId, "series", filtered, VOD_TTL)
 
   // Invalidate series info
@@ -266,7 +336,13 @@ export async function deleteEpisode(playlistId, seriesId, episodeId) {
   const seriesInfo = await getSeriesDetails(playlistId, seriesId)
   if (!seriesInfo || !seriesInfo.episodes || !seriesInfo.episodes["1"]) return false
 
-  seriesInfo.episodes["1"] = seriesInfo.episodes["1"].filter((e) => Number(e.id) !== Number(episodeId))
+  const targetEpIdStr = episodeId != null ? String(episodeId).trim() : ""
+  seriesInfo.episodes["1"] = seriesInfo.episodes["1"].filter((e) => {
+    const eIdStr = e.id != null ? String(e.id).trim() : ""
+    if (targetEpIdStr && eIdStr === targetEpIdStr) return false
+    if (targetEpIdStr && !isNaN(Number(targetEpIdStr)) && Number(e.id) === Number(targetEpIdStr)) return false
+    return true
+  })
   if (seriesInfo.seasons && seriesInfo.seasons[0]) {
     seriesInfo.seasons[0].episode_count = seriesInfo.episodes["1"].length
   }

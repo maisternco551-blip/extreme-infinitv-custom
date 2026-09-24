@@ -11,7 +11,7 @@ import {
 import { xtreamApiFetch, resolveStreamUrl } from "@/scripts/lib/xtream-api.js"
 import { isCastRoutingActive, routePlayToCast, castXtreamEpisodeToTv } from "@/scripts/lib/tv-cast.js"
 import { isCastableSrc, buildVodCastDescriptor } from "@/scripts/lib/tv-cast-descriptor.js"
-import { getCached, setCached } from "@/scripts/lib/cache.js"
+import { getCached, setCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
 import { ensureSeries } from "@/scripts/lib/catalog.js"
 import {
   ensureLoaded as ensurePrefsLoaded,
@@ -217,6 +217,7 @@ function repaintHeroIfArtworkChanged() {
 
 function buildEpisodeStreamUrl(ep, c = creds) {
   if (ep?._directUrl) return ep._directUrl
+  if (ep?.url) return ep.url
   if (!c.host || !c.user || !c.pass) return ""
   return buildSeriesStreamUrl(c, ep.id, ep.container_extension)
 }
@@ -2162,6 +2163,8 @@ async function boot() {
   await ensurePrefsLoaded()
   creds = await loadCreds()
 
+  await hydrateCache(active._id, "series")
+  await hydrateCache(active._id, `series_info_${seriesId}`)
   const list = getCached(active._id, "series")
   const catalogSeries = list?.data?.find((entry) => Number(entry.id) === seriesId) || null
 

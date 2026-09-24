@@ -70,12 +70,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
-          tag_name: v1.9.0-custom
-          name: "Extreme InfiniTV - Custom Edition (APK)"
+          tag_name: v1.9.1-custom
+          name: "Extreme InfiniTV - Custom Edition v1.9.1 (APK)"
           body: |
-            ## 🚀 Extreme InfiniTV - Custom Edition
+            ## 🚀 Extreme InfiniTV - Custom Edition v1.9.1
             - 🎨 **Theme**: Obsidian OLED & Cinematic Crimson Ember
             - 🎬 **Smart Importer**: One-click JSON/W3U Movie & Series Importer
+            - 🗑️ **Delete System**: In-App Confirmation Modal for Movies, Series & Episodes
+            - ⚡ **Stream Health**: Real-time Link Health Checker (🟢 Ready / 🔴 Broken)
             - 📺 **Android TV**: 100% Leanback & D-pad remote compatible
             - 📦 **Target**: Universal Android TV & Mobile
           files: build_output/*.apk

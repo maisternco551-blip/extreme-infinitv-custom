@@ -118,8 +118,14 @@ const view: TvView = {
   prepaint(root: HTMLElement, url: URL): boolean {
     const movieId = Number(url.searchParams.get("id") || "0")
     if (!movieId || !lastKnownPlaylistId) return false
-    const cachedCatalog = (getCached(lastKnownPlaylistId, "vod")?.data || []) as CatalogRow[]
-    const catalogRow = cachedCatalog.find((row) => Number(row.id) === movieId)
+    const cachedVod = (getCached(lastKnownPlaylistId, "vod")?.data || []) as CatalogRow[]
+    const cachedM3u = (getCached(lastKnownPlaylistId, "m3u")?.data || []) as CatalogRow[]
+    const cachedCatalog = [...cachedVod, ...cachedM3u]
+    const catalogRow = cachedCatalog.find((row) => 
+      Number(row.id) === movieId || 
+      String(row.id) === String(movieId) || 
+      String((row as any).stream_id) === String(movieId)
+    )
     if (!catalogRow) return false
     markLastOpenedEntry({ kind: "vod", id: movieId })
     const chrome = createDetailChrome(root)
@@ -207,6 +213,7 @@ const view: TvView = {
 
     async function startPlayback(resumeSeconds: number): Promise<void> {
       if (!movie || !activePlaylistId) return
+      const directUrl = (movie as any)?.url || (movie as any)?.directUrl || detailSrc() || null
       await playVod(
         {
           playlistId: activePlaylistId,
@@ -216,6 +223,8 @@ const view: TvView = {
           containerExt,
           resumeSeconds,
           durationSeconds: knownDurationSeconds() || undefined,
+          directUrl,
+          referer: (movie as any)?.referer || null,
         },
         {
           onEnded: () => renderActions(),
@@ -539,8 +548,16 @@ const view: TvView = {
       creds = await loadCreds()
       if (destroyed) return
 
-      const cachedCatalog = (getCached(activePlaylistId, "vod")?.data || []) as CatalogRow[]
-      const catalogRow = cachedCatalog.find((row) => Number(row.id) === movieId) || null
+      await hydrateCache(activePlaylistId, "vod")
+      await hydrateCache(activePlaylistId, "m3u")
+      const cachedVod = (getCached(activePlaylistId, "vod")?.data || []) as CatalogRow[]
+      const cachedM3u = (getCached(activePlaylistId, "m3u")?.data || []) as CatalogRow[]
+      const cachedCatalog = cachedM3u.length ? [...cachedM3u, ...cachedVod] : [...cachedVod, ...cachedM3u]
+      const catalogRow = cachedCatalog.find((row) => 
+        Number(row.id) === movieId || 
+        String(row.id) === String(movieId) || 
+        String((row as any).stream_id) === String(movieId)
+      ) || null
       movie = catalogRow || {
         id: movieId,
         name: stubName(),

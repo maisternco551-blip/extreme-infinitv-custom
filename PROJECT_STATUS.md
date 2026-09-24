@@ -63,5 +63,18 @@
   - **ลิงก์ดาวน์โหลดบน GitHub:** [Extreme InfiniTV v1.9.0-custom Release](https://github.com/maisternco551-blip/extreme-infinitv-custom/releases/tag/v1.9.0-custom)
   - **การนำไปติดตั้ง:** สามารถคัดลอกไฟล์ `app-universal-debug.apk` ใส่ Flash Drive ไปเสียบติดตั้งบน Android TV / Google TV หรือส่งเข้ามือถือ Android ได้ทันที!
 
+
+---
+
+## 5. การอัปเดตฟังก์ชันระบบล่าสุด (Recent Fixes & Enhancements)
+
+1. **แก้ปัญหากดปุ่ม "ลบ" ในหน้าจัดการหนัง/ซีรีส์ไม่ทำงาน (In-App Delete Confirmation Modal):**
+   - **สาเหตุเดิม:** การใช้คำสั่ง `window.confirm()` แบบดั้งเดิมถูกเบราว์เซอร์ Chromium / WebView / Android TV บล็อกการเปิด Popup ยืนยัน ทำให้คำสั่งคืนค่า `false` ทันทีและคำสั่งลบถูกยกเลิกเงียบๆ
+   - **วิธีแก้ไข:** พัฒนาระบบ In-App Confirmation Modal แบบ Obsidian OLED ภายในหน้าแอปโดยตรง เมื่อคลิกปุ่ม **"ลบ"** จะมีกล่องข้อความถามยืนยันพร้อมปุ่มสีแดง **"ยืนยันการลบ"** และมี Optimistic UI Update ลบรายการออกจากหน้าจอทันที พร้อมแสดง Toast แจ้งเตือนสีเขียว รองรับทั้งหนัง, ซีรีส์ และตอนซีรีส์
+2. **แก้ปัญหาหน้าเล่นหนัง (Movie Detail) ไม่ยอมเล่นวิดีโอ:**
+   - ทำ Cache Hydration ทั้ง `m3u` และ `vod` บนหน้า `/movies/detail/` และจับคู่ URL สตรีมตรง (`url` / `directUrl`) ทำให้เล่นภาพยนตร์ได้ทุกเรื่องอย่างถูกต้อง
+3. **ระบบตรวจสอบสถานะสตรีม (Stream Health Check - 🟢 พร้อมเล่น / 🔴 ลิงก์เสีย / ⚪ ตรวจลิงก์):**
+   - แสดงสถานะความพร้อมของลิงก์สตรีมแบบ Real-time ทั้งในตารางจัดการหนัง, จัดการตอนซีรีส์, Modal ทดสอบลิงก์เดี่ยว และปุ่ม Badge บนหน้าเล่นหนัง
+
 ---
 *บันทึกอัปเดตโดย Antigravity AI - วันที่ 24 ก.ย. 2026*
